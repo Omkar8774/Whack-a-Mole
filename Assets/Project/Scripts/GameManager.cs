@@ -15,6 +15,7 @@ public class GameManager : MonoBehaviour
     public DataRecorder recorder;
 
     public GameObject[] molePrefabs;   // Different mole prefabs
+    public ParticleSystem[] particleSystem;
 
     private Question currentQuestion;
     private int correctMoleIndex = -1;
@@ -25,7 +26,14 @@ public class GameManager : MonoBehaviour
     public AudioClip correct;
     public AudioClip error;
     public AudioSource audioSource;
+    public AudioClip hammerHit;
 
+    private bool roundLocked = false;
+
+    
+    public ParticleSystem winParticles;     // assign particle prefab
+    public float winPanelDelay = 1.0f;  // delay before showing win panel
+    public AudioClip winSound;
 
     // ------------------- START GAME -------------------
 
@@ -65,6 +73,8 @@ public class GameManager : MonoBehaviour
 
     public void NextQuestion()
     {
+        roundLocked = false;   // Unlock for next 3 new moles
+
         currentQuestion = questionManager.GetNextQuestion();
 
         if (currentQuestion == null)
@@ -76,6 +86,7 @@ public class GameManager : MonoBehaviour
         bool isPractice = (mode == PlayMode.Practice);
         uiManager.DisplayQuestion(currentQuestion, isPractice);
     }
+
 
 
     // ------------------- SPAWN MOLES -------------------
@@ -125,19 +136,21 @@ public class GameManager : MonoBehaviour
 
     public void OnMoleTapped(int index)
     {
+        //audioSource.PlayOneShot(hammerHit);
+        if (roundLocked) return;
+        roundLocked = true;
+
         totalAnswered++;
         bool isCorrect = (index == correctMoleIndex);
 
         if (isCorrect)
         {
-            audioSource.PlayOneShot(correct);
             correctCount++;
-            StartCoroutine(HitCorrectMole(index));
+            StartCoroutine(HitCorrectMole(index)); // Correct logic
         }
         else
         {
-            audioSource.PlayOneShot(error);
-
+            StartCoroutine(WrongTapRoutine());  // Wrong tap logic
             if (mode == PlayMode.Test)
             {
                 lives.Decrement();
@@ -149,6 +162,19 @@ public class GameManager : MonoBehaviour
             }
         }
     }
+    IEnumerator WrongTapRoutine()
+    {
+        audioSource.PlayOneShot(error);
+
+        // Wait for the error clip to finish
+        yield return new WaitForSeconds(error.length);
+
+        // Unlock round after the sound finishes
+        roundLocked = false;
+    }
+
+
+
 
     IEnumerator HitCorrectMole(int index)
     {
@@ -163,15 +189,16 @@ public class GameManager : MonoBehaviour
         Animator anim = hammer.GetComponent<Animator>();
         if (anim != null)
             anim.Play("HammerPopHit");
+        particleSystem[index].Play();
 
+        audioSource.PlayOneShot(hammerHit);
         yield return new WaitForSeconds(1f);
 
         // Animate remaining moles down
-        for (int i = 0; i < activeMoles.Count; i++)
-        {
-            if (i != index)
-                activeMoles[i].GetComponent<Animator>().Play("Mole_Down");
-        }
+        
+                activeMoles[index].GetComponent<Animator>().Play("Mole_Down");
+            audioSource.PlayOneShot(correct);
+
         yield return new WaitForSeconds(1f);
 
         // Clear moles
@@ -181,6 +208,13 @@ public class GameManager : MonoBehaviour
 
         hammer.SetActive(false);
         NextQuestion();
+    }
+    public void TimeUp()
+    {
+        if (mode == PlayMode.Test)
+        {
+            EndGame(false); // Timer over → show lose panel or win logic
+        }
     }
 
     public void ResetToStart()
@@ -240,10 +274,35 @@ public class GameManager : MonoBehaviour
             timer.StopTimer();
 
         float score = Mathf.Round((float)correctCount / Mathf.Max(1, totalAnswered) * 100f);
-        uiManager.ShowWinPanel(score, completed);
 
+        // Score below 50 = force lose
+        bool finalStatus = completed;
+        if (score < 50)
+            finalStatus = false;
+
+        StartCoroutine(EndGameRoutine(score, finalStatus));
+    }
+    IEnumerator EndGameRoutine(float score, bool finalStatus)
+    {
+        // Play particle effects (if assigned)
+        if (winParticles != null)
+        {
+            audioSource.PlayOneShot(winSound);
+            winParticles.Play();
+            //Destroy(winParticles, 2f); // remove after 3 seconds
+        }
+
+        // Delay before showing panel
+        yield return new WaitForSeconds(winPanelDelay);
+
+        // Now show win / lose panel
+        uiManager.ShowWinPanel(score, finalStatus);
+
+        // Save data
         recorder.SaveToFile();
     }
+
+
 
     public void QuitApp()
     {
